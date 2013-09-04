@@ -8,6 +8,7 @@
 % ((2+3)-4) => {minus, {plus, {num, 2}, {num, 3}}, {num, 4}}.
 % 4 => {num, 4}.
 % ~((2*3)+(3*4)) => {minus {plus, {plus, {mult, {num, 2}, {num, 3}}, {mult, {num, 3}, {num, 4}}}}}.
+% 3+3+2+1+4+5+6+7*8-1-2-4-4/2+1+0 => ...
 
 % expr   ::= number | ( expr ) | un_op expr | expr bin_op expr 
 % digit  ::= [0-9]
@@ -15,82 +16,55 @@
 % bin_op ::= * | / | + | -
 % un_op  ::= ~
 
-% parse(List) -> parse_impl(List, [], []).
-% parse_impl([], Lexems, [])     -> lists:reverse(Lexems);
-% parse_impl([], Lexems, Digits) -> lists:reverse([lists:reverse(Digits)|Lexems]);
-% parse_impl([Character|Tail], Lexems,  Digits) when Character >= $0, Character =< $9 -> parse_impl(Tail, Lexems, [Character|Digits]);
-% parse_impl([_Character|Tail], Lexems, [])     -> parse_impl(Tail, Lexems, []);
-% parse_impl([_Character|Tail], Lexems, Digits) -> parse_impl(Tail, [lists:reverse(Digits)|Lexems], []).
-
 % ------------------------------------------------------------------------------------------------------------------------------------
-% Lexic
+% parse
 % ------------------------------------------------------------------------------------------------------------------------------------
-character2tag($+) -> binary_operation;
-character2tag($-) -> binary_operation;
-character2tag($*) -> binary_operation;
-character2tag($/) -> binary_operation;
-character2tag($~) -> unary_operation;
-character2tag($() -> bracket_open;
-character2tag($)) -> bracket_close.
 
-get_lexemes(String) -> get_lexemes_acc(String, []).
+id2action($*) -> multiply;
+id2action($/) -> divide;
+id2action($+) -> add;
+id2action($-) -> subtract;
+id2action($~) -> negate.
 
-get_lexemes_acc([], LexemeList) -> lists:reverse(LexemeList);
-
-get_lexemes_acc([X|Tail], LexemeList) when X >= $0, X =< $9 -> 
-    { RemainingString, NumberAsString } = get_number([X|Tail]), 
-    get_lexemes_acc(RemainingString, [{number, NumberAsString} | LexemeList]);   
-   
-get_lexemes_acc([X|Tail], LexemeList) when X == $+; X == $-; X == $*; X == $/; X == $~ -> 
-    get_lexemes_acc(Tail, [{character2tag(X), [X]} | LexemeList]);
-
-get_lexemes_acc([X|Tail], LexemeList) when X == $(; X == $) -> 
-    get_lexemes_acc(Tail, [{character2tag(X)} | LexemeList]);
-    
-% Skip unknown characters.
-get_lexemes_acc([_X|Tail], LexemeList) -> get_lexemes_acc(Tail, LexemeList).
-
-get_number(List) -> get_number_acc(List, []).
-get_number_acc([X|Tail], NumberAsString) when X >= $0, X =< $9 -> get_number_acc(Tail, [X|NumberAsString]);
-get_number_acc(List, NumberAsString) -> { List, lists:reverse(NumberAsString) }.
-
-% ------------------------------------------------------------------------------------------------------------------------------------
-% Syntax
-% ------------------------------------------------------------------------------------------------------------------------------------
-% ? 3+3+2+1+4+5+6+7*8-1-2-4-4/2+1+0
-
-id2action("*") -> multiply;
-id2action("/") -> divide;
-id2action("+") -> add;
-id2action("-") -> subtract;
-id2action("~") -> negate.
-
+replace_pattern([{number,Str},{digit,Ch}|Tail])               -> replace_pattern([{number,[Ch|Str]}|Tail]); 
+replace_pattern([{digit,Ch}|Tail])                            -> replace_pattern([{number,[Ch|[]]}|Tail]); 
+replace_pattern([{number,Str}|Tail])                          -> replace_pattern([list_to_integer(Str)|Tail]); 
 replace_pattern([Arg, {unary_operation,Id}|Tail])             -> replace_pattern([[id2action(Id), Arg]|Tail]); 
 replace_pattern([Arg2, {binary_operation,Id}, Arg1|Tail])     -> replace_pattern([[id2action(Id), Arg1, Arg2]|Tail]); 
 replace_pattern([{bracket_close}, Expr, {bracket_open}|Tail]) -> replace_pattern([Expr|Tail]);   
-replace_pattern(Expr) -> Expr.
+replace_pattern(Expr)                                         -> Expr.
 
-parse(String) -> parse_acc(before_number, get_lexemes(String), []).
+parse(Str) -> parse_acc(before_number, Str, []).
 
-parse_acc(before_number, [Lex|LexList], Expr) when element(1, Lex) == bracket_open; 
-                                                   element(1, Lex) == unary_operation -> 
-    % io:format("~p~n", [[Lex|Expr]]), 
-    parse_acc(before_number, LexList, [Lex|Expr]);
-    
-parse_acc(before_number, [Lex|LexList], Expr) when element(1, Lex) == number -> 
-    % io:format("~p~n", [[list_to_integer(element(2, Lex))|Expr]]), 
-    parse_acc(after_number,  LexList, replace_pattern([list_to_integer(element(2, Lex))|Expr]));
-    
-parse_acc(after_number,  [Lex|LexList], Expr) when element(1, Lex) == binary_operation -> 
-    % io:format("~p~n", [[Lex|Expr]]), 
-    parse_acc(before_number, LexList, [Lex|Expr]);
-    
-parse_acc(after_number,  [Lex|LexList], Expr) when element(1, Lex) == bracket_close -> 
-    % io:format("~p~n", [[Lex|Expr]]), 
-    parse_acc(after_number,  LexList, replace_pattern([Lex|Expr]));     
+% Bracket open.
+parse_acc(before_number, [Ch|Str], Expr) when Ch == $( -> 
+    parse_acc(before_number, Str, [{bracket_open}|Expr]);
 
+% Unary operations.
+parse_acc(before_number, [Ch|Str], Expr) when Ch == $~ -> 
+    parse_acc(before_number, Str, [{unary_operation,Ch}|Expr]);
+    
+% Digits.    
+parse_acc(State, [Ch|Str], Expr) when ((State == before_number) or (State == number)), Ch >= $0, Ch =< $9 -> 
+    parse_acc(number, Str, [{digit,Ch}|Expr]);
+    
+parse_acc(number, Str, Expr) -> 
+    parse_acc(after_number, Str, replace_pattern(Expr));
+    
+% Binary operations.        
+parse_acc(after_number, [Ch|Str], Expr) when Ch == $+; Ch == $-; Ch == $*; Ch == $/ -> 
+    parse_acc(before_number, Str, [{binary_operation,Ch}|Expr]);
+    
+% Bracket close.    
+parse_acc(after_number, [Ch|Str], Expr) when Ch == $) -> 
+    parse_acc(after_number, Str, replace_pattern([{bracket_close}|Expr]));     
+
+% Skip unknown characters.
+parse_acc(_State, [_Ch|Str], Expr) -> 
+    parse_acc(_State, Str, Expr);    
+    
+% Done.
 parse_acc(_State, [], [Expr|[]]) -> 
-    % io:format("~p~n", [Expr]), 
     Expr.     
 
 % ------------------------------------------------------------------------------------------------------------------------------------
@@ -133,7 +107,8 @@ to_stack_machine_code(Number)               -> Number.
 % ------------------------------------------------------------------------------------------------------------------------------------
 run_stack_machine(Code) -> run_stack_machine_acc(Code, []).
 
-run_stack_machine_acc([], [Result|[]]) -> Result;
+run_stack_machine_acc([], [Result|[]]) -> 
+    Result;
 
 run_stack_machine_acc([negate|Code], [Number|Stack]) -> 
     % io:format("~p ~p~n", [[negate|Code], [Number|Stack]]), 
